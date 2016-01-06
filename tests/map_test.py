@@ -1,7 +1,7 @@
 from collections import Mapping, Hashable
 from operator import add
 import pytest
-from pyrsistent import pmap, m
+from pyrsistent import pmap, m, PVector
 import pickle
 
 def test_instance_of_hashable():
@@ -52,15 +52,19 @@ def test_remove_non_existing_element_raises_key_error():
 
     assert str(error.value) == "'b'"
 
+
 def test_various_iterations():
     assert set(['a', 'b']) == set(m(a=1, b=2))
     assert ['a', 'b'] == sorted(m(a=1, b=2).keys())
+    assert isinstance(m().keys(), PVector)
 
     assert set([1, 2]) == set(m(a=1, b=2).itervalues())
     assert [1, 2] == sorted(m(a=1, b=2).values())
+    assert isinstance(m().values(), PVector)
 
     assert set([('a', 1), ('b', 2)]) == set(m(a=1, b=2).iteritems())
     assert set([('a', 1), ('b', 2)]) == set(m(a=1, b=2).items())
+    assert isinstance(m().items(), PVector)
 
 
 def test_initialization_with_two_elements():
@@ -154,23 +158,27 @@ def test_update_no_arguments():
     assert x.update() is x
 
 
-def test_set_in_base_case():
+def test_addition():
+    assert m(x=1, y=2) + m(y=3, z=4) == m(x=1, y=3, z=4)
+
+
+def test_transform_base_case():
     # Works as set when called with only one key
     x = m(a=1, b=2)
     
-    assert x.set_in(['a'], 3) == m(a=3, b=2)
+    assert x.transform(['a'], 3) == m(a=3, b=2)
 
 
-def test_set_in_nested_maps():
+def test_transform_nested_maps():
     x = m(a=1, b=m(c=3, d=m(e=6, f=7)))
     
-    assert x.set_in(['b', 'd', 'e'], 999) == m(a=1, b=m(c=3, d=m(e=999, f=7)))
+    assert x.transform(['b', 'd', 'e'], 999) == m(a=1, b=m(c=3, d=m(e=999, f=7)))
 
 
-def test_set_in_levels_missing():
+def test_transform_levels_missing():
     x = m(a=1, b=m(c=3))
     
-    assert x.set_in(['b', 'd', 'e'], 999) == m(a=1, b=m(c=3, d=m(e=999)))
+    assert x.transform(['b', 'd', 'e'], 999) == m(a=1, b=m(c=3, d=m(e=999)))
 
 
 class HashDummy(object):
@@ -328,6 +336,23 @@ def test_evolver_update_with_relocation():
     assert e.persistent() == pmap({'a': 1000, 'b': 3000, 'c': 4000, 'd': 6000})
 
 
+def test_evolver_set_with_reallocation_edge_case():
+    # Demonstrates a bug in evolver that also affects updates. Under certain
+    # circumstances, the result of `x.update(y)` will **not** have all the
+    # keys from `y`.
+    foo = object()
+    x = pmap({'a': foo}, pre_size=1)
+    e = x.evolver()
+    e['b'] = 3000
+    # Bug is triggered when we do a reallocation and the new value is
+    # identical to the old one.
+    e['a'] = foo
+
+    y = e.persistent()
+    assert 'b' in y
+    assert y is e.persistent()
+
+
 def test_evolver_remove_element():
     e = m(a=1000, b=2000).evolver()
     assert 'a' in e
@@ -344,9 +369,11 @@ def test_evolver_remove_element_not_present():
 
     assert str(error.value) == "'c'"
 
+
 def test_copy_returns_reference_to_self():
     m1 = m(a=10)
     assert m1.copy() is m1
+
 
 def test_dot_access_of_non_existing_element_raises_attribute_error():
     m1 = m(a=10)
@@ -355,3 +382,22 @@ def test_dot_access_of_non_existing_element_raises_attribute_error():
         m1.b
 
     assert "'b'" in str(error.value)
+
+
+def test_pmap_unorderable():
+    with pytest.raises(TypeError):
+        _ = m(a=1) < m(b=2)
+
+    with pytest.raises(TypeError):
+        _ = m(a=1) <= m(b=2)
+
+    with pytest.raises(TypeError):
+        _ = m(a=1) > m(b=2)
+
+    with pytest.raises(TypeError):
+        _ = m(a=1) >= m(b=2)
+
+
+def test_supports_weakref():
+    import weakref
+    weakref.ref(m(a=1))

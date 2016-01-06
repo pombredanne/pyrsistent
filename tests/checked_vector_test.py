@@ -1,7 +1,7 @@
 import datetime
 import pickle
 import pytest
-from pyrsistent import _PVectorImpl, CheckedPVector, InvariantException, optional
+from pyrsistent import CheckedPVector, InvariantException, optional, CheckedValueTypeError, PVector
 
 
 class Naturals(CheckedPVector):
@@ -13,7 +13,7 @@ def test_instantiate():
 
     assert list(x) == [1, 2, 3]
     assert isinstance(x, Naturals)
-    assert isinstance(x, _PVectorImpl)
+    assert isinstance(x, PVector)
 
 def test_append():
     x = Naturals()
@@ -38,8 +38,14 @@ def test_set():
 
 
 def test_invalid_type():
-    with pytest.raises(TypeError):
+    try:
         Naturals([1, 2.0])
+        assert False
+    except CheckedValueTypeError as e:
+        assert e.expected_types == (int,)
+        assert e.actual_type is float
+        assert e.actual_value == 2.0
+        assert e.source_class is Naturals
 
     x = Naturals([1, 2])
     with pytest.raises(TypeError):
@@ -59,26 +65,26 @@ def test_breaking_invariant():
         Naturals([1, -1])
         assert False
     except InvariantException as e:
-        assert e.invariant_errors == ['Negative value']
+        assert e.invariant_errors == ('Negative value',)
 
     x = Naturals([1, 2])
     try:
         x.append(-1)
         assert False
     except InvariantException as e:
-        assert e.invariant_errors == ['Negative value']
+        assert e.invariant_errors == ('Negative value',)
 
     try:
         x.extend([-1])
         assert False
     except InvariantException as e:
-        assert e.invariant_errors == ['Negative value']
+        assert e.invariant_errors == ('Negative value',)
 
     try:
         x.set(1, -1)
         assert False
     except InvariantException as e:
-        assert e.invariant_errors == ['Negative value']
+        assert e.invariant_errors == ('Negative value',)
 
 def test_create_base_case():
     x =  Naturals.create([1, 2, 3])
@@ -138,7 +144,7 @@ def test_invariants_are_inherited():
         LimitNaturals([10, -1])
         assert False
     except InvariantException as e:
-        assert e.invariant_errors == ['Too big', 'Negative value']
+        assert e.invariant_errors == ('Too big', 'Negative value')
 
 def test_invariant_must_be_callable():
     with pytest.raises(TypeError):
@@ -165,3 +171,34 @@ def test_pickling():
 
     assert x == y
     assert isinstance(y, Naturals)
+
+def test_multiple_optional_types():
+    class Numbers(CheckedPVector):
+        __type__ = optional(int, float)
+
+    numbers = Numbers([1, 2.5, None])
+    assert numbers.serialize() == [1, 2.5, None]
+
+    with pytest.raises(TypeError):
+        numbers.append('foo')
+
+
+class NaturalsVectorStr(CheckedPVector):
+    __type__ = 'tests.checked_vector_test.Naturals'
+
+
+def test_check_with_string_specification():
+    naturals_list = [Naturals([1, 2]), Naturals([3, 4])]
+    nv = NaturalsVectorStr(naturals_list)
+    assert nv == naturals_list
+
+
+def test_create_with_string_specification():
+    naturals_list = [[1, 2], [3, 4]]
+    nv = NaturalsVectorStr.create(naturals_list)
+    assert nv == naturals_list
+
+
+def test_supports_weakref():
+    import weakref
+    weakref.ref(Naturals([]))

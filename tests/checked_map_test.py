@@ -1,6 +1,7 @@
 import pickle
 import pytest
-from pyrsistent import CheckedPMap, InvariantException, PMap, CheckedType, CheckedPSet, CheckedPVector
+from pyrsistent import CheckedPMap, InvariantException, PMap, CheckedType, CheckedPSet, CheckedPVector, \
+    CheckedKeyTypeError, CheckedValueTypeError
 
 
 class FloatToIntMap(CheckedPMap):
@@ -30,11 +31,11 @@ def test_set():
      assert isinstance(x2, FloatToIntMap)
 
 def test_invalid_key_type():
-     with pytest.raises(TypeError):
+     with pytest.raises(CheckedKeyTypeError):
          FloatToIntMap({1: 1})
 
 def test_invalid_value_type():
-     with pytest.raises(TypeError):
+     with pytest.raises(CheckedValueTypeError):
          FloatToIntMap({1.0: 1.0})
 
 def test_breaking_invariant():
@@ -42,7 +43,7 @@ def test_breaking_invariant():
          FloatToIntMap({1.5: 2})
          assert False
      except InvariantException as e:
-        assert e.invariant_errors == ['Invalid mapping']
+        assert e.invariant_errors == ('Invalid mapping',)
 
 def test_repr():
     x = FloatToIntMap({1.25: 1})
@@ -119,3 +120,33 @@ def test_pickling():
 
     assert x == y
     assert isinstance(y, FloatToIntMap)
+
+
+class FloatVector(CheckedPVector):
+    __type__ = float
+
+
+class VectorToSetMap(CheckedPMap):
+    __key_type__ = 'tests.checked_map_test.FloatVector'
+    __value_type__ = 'tests.checked_map_test.FloatSet'
+
+
+def test_type_check_with_string_specification():
+    content = [1.5, 2.0]
+    vec = FloatVector(content)
+    sett = FloatSet(content)
+    map = VectorToSetMap({vec: sett})
+
+    assert map[vec] == sett
+
+
+def test_type_creation_with_string_specification():
+    content = (1.5, 2.0)
+    map = VectorToSetMap.create({content: content})
+
+    assert map[FloatVector(content)] == set(content)
+
+
+def test_supports_weakref():
+    import weakref
+    weakref.ref(VectorToSetMap({}))

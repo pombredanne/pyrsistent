@@ -1,6 +1,6 @@
 import pickle
 import pytest
-from pyrsistent import CheckedPSet, PSet, InvariantException, CheckedType, CheckedPVector
+from pyrsistent import CheckedPSet, PSet, InvariantException, CheckedType, CheckedPVector, CheckedValueTypeError
 
 
 class Naturals(CheckedPSet):
@@ -23,7 +23,7 @@ def test_add():
     assert isinstance(x2, Naturals)
 
 def test_invalid_type():
-    with pytest.raises(TypeError):
+    with pytest.raises(CheckedValueTypeError):
         Naturals([1, 2.0])
 
 def test_breaking_invariant():
@@ -31,7 +31,7 @@ def test_breaking_invariant():
         Naturals([1, -1])
         assert False
     except InvariantException as e:
-        assert e.invariant_errors == ['Negative value']
+        assert e.invariant_errors == ('Negative value',)
 
 def test_repr():
     x = Naturals([1, 2])
@@ -78,3 +78,8 @@ def test_pickling():
 
     assert x == y
     assert isinstance(y, Naturals)
+
+
+def test_supports_weakref():
+    import weakref
+    weakref.ref(Naturals([1, 2]))

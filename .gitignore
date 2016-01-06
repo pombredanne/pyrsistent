@@ -7,3 +7,8 @@ pyrsistent.egg-info/
 dist/
 .idea
 .tox
+README.html
+.hypothesis
+.cache
+#*
+.coverage

@@ -3,15 +3,16 @@ from setuptools import setup, Extension
 import sys
 import platform
 import warnings
+import codecs
 from distutils.command.build_ext import build_ext
 from distutils.errors import CCompilerError
 from distutils.errors import DistutilsPlatformError, DistutilsExecError
 from _pyrsistent_version import __version__
 
 
-f = open(os.path.join(os.path.dirname(__file__), 'README.rst'))
-readme = f.read()
-f.close()
+readme_path = os.path.join(os.path.dirname(__file__), 'README.rst')
+with codecs.open(readme_path, encoding='utf8') as f:
+    readme = f.read()
 
 extensions = []
 if platform.python_implementation() == 'CPython':
@@ -65,7 +66,7 @@ setup(
     author_email='tobias.l.gustafsson@gmail.com',
     url='http://github.com/tobgu/pyrsistent/',
     license='LICENSE.mit',
-    py_modules=['pyrsistent', '_pyrsistent_version'],
+    py_modules=['_pyrsistent_version'],
     classifiers=[
         'Intended Audience :: Developers',
         'License :: OSI Approved :: MIT License',
@@ -77,4 +78,5 @@ setup(
     ext_modules=extensions,
     cmdclass={"build_ext": custom_build_ext},
     install_requires=['six'],
+    packages=['pyrsistent']
 )

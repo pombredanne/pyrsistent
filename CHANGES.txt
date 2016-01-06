@@ -1,5 +1,94 @@
 Revision history
 ----------------
+v0.11.10, 2015-12-27
+ * Implement #74, attribute access on PClass evolver
+ * Implement #75, lazily evaluated invariant messages by providing a
+   callable with no arguments.
+ * Initial values on fields can now be evaluated on object creation
+   by providing a callable with no arguments.
+
+v0.11.9, 2015-11-01
+ * Added PVector.remove(), thanks @radix for initiating this!
+
+v0.11.8, 2015-10-18
+ * Fix #66, UnicodeDecodeError when doing pip install in environments with ascii encoding as default.
+   Thanks @foolswood!
+ * Implement support for multiple types in pmap_field(), pvector_field() and pset_field(). Thanks @itamarst!
+
+v0.11.7, 2015-10-03
+ * Fix #52, occasional SEGFAULTs due to misplaced call to PyObject_GC_Track. Thanks @jkbjh for this!
+ * Fix #42, complete support for delete. Now also on the C-implementation of the PVectorEvolver.
+   Thanks @itamarst for contributing a whole bunch of Hypothesis test cases covering the evolver operations!
+
+v0.11.6, 2015-09-30
+ * Add +, -, & and | operations to PBag. Thanks @Futrell for this!
+
+v0.11.5, 2015-09-29
+ * Fix bug introduced in 0.11.4 that prevented multi level inheritance from PClass.
+ * Make PClassMeta public for friendlier subclassing
+
+v0.11.4, 2015-09-28
+ * Fix #59, make it possible to create weakrefs to all collection types.
+   Thanks @itamarst for reporting it.
+ * Fix #58, add __str__ to InvariantException. Thanks @tomprince for reporting it.
+
+v0.11.3, 2015-09-15
+  * Fix #57, support pickling of PClasses and PRecords using pmap_field, pvector_field, and pset_field.
+    Thanks @radix for reporting this and submitting a fix for it!
+
+v0.11.2, 2015-09-09
+  * Fix bug causing potential element loss when reallocating PMap. Thanks to @jml for finding
+    this and submitting a PR with a fix!
+  * Removed python 3.2 test build from Travis. There is nothing breaking 3.2 compatibility in this
+    release but there will be no effort moving forward to keep the 3.2 compatibility.
+
+v0.11.1, 2015-08-24
+  * Fix #51, PClass.set() broken when used with string+value argument.
+  * #50, make it possible to specify more than one assertion in an invariant
+  * #48, make it possible to make recursive type references by using a string
+    as type specification.
+
+v0.11.0, 2015-07-11
+  * #42, delete() function added to PVector to allow deletion of elements by index
+    and range. Will perform a full copy of the vector, no structural sharing.
+    Thanks @radix for helping out with this one!
+  * Fix #39, explicitly disallow ordering for PMap and PBag, Python 3 style
+  * Fix #37, PMap.values()/keys()/items() now returns PVectors instead of lists
+
+v0.10.3, 2015-06-13
+  * Fix #40, make it possible to disable the C extension by setting the
+    PYRSISTENT_NO_C_EXTENSION environment variable.
+
+v0.10.2, 2015-06-07
+  * Fix #38, construction from serialized object for pvector/pset/pmap fields.
+
+v0.10.1, 2015-04-27
+  * Fix broken README.rst
+
+v10.0.0, 2015-04-27
+  * New type PClass, a persistent version of a Python object. Related to issues #30 and #32.
+    Thanks @exarkun and @radix for input on this one!
+  * Rename PRecordTypeError -> PTypeError, it is now also raised by PClass
+  * New convenience functions, pvector_field, pmap_field and pset_field to create PRecord/PClass
+    fields for checked collections. Issues #26 and #36. Thanks to @itamarst for this!
+  * Removed deprecated function set_in() on PMap and PVector.
+  * Removed deprecated factory function pclass.
+  * Major internal restructuring breaking pyrsistent.py into multiple files. This should
+    not affect those only using the public interface but if you experience problems please
+    let me know.
+
+v0.9.4, 2015-04-20
+  * Fix #34, PVector now compares against built in list type
+
+v0.9.3, 2015-04-06
+  * Rename pclass back to immutable and deprecate the usage of the pclass function. PClass will be used by
+    a new, different type in upcoming releases.
+  * Documentation strings for the exceptions introduced in 0.9.2.
+
+v0.9.2, 2015-04-03
+  * More informative type errors from checked types, issue #30
+  * Support multiple optional types, issue #28
+
 v0.9.1, 2015-02-25
   * Multi level serialization for checked types
 
@@ -108,5 +197,3 @@ TODO (in no particular order)
 - Versioned data structure where the different versions can be accessed by index?
 - Ordered sets and maps
 - A good performance measurement suite
-- Provide additional package with literal syntax for pvector, pmap, pset?
-- Refactor to split pyrsistent.py into multiple files

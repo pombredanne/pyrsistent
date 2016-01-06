@@ -49,6 +49,7 @@ typedef struct {
   unsigned int shift;
   VNode *root;
   VNode *tail;
+  PyObject *in_weakreflist; /* List of weak references */
 } PVector;
 
 typedef struct {
@@ -65,7 +66,7 @@ static PyObject* transform_fn = NULL;
 static PyObject* transform(PVector* self, PyObject* args) {
   if(transform_fn == NULL) {
     // transform to avoid circular import problems
-    transform_fn = PyObject_GetAttrString(PyImport_ImportModule("pyrsistent"), "_transform");
+    transform_fn = PyObject_GetAttrString(PyImport_ImportModule("pyrsistent._transformations"), "transform");
   }
 
   return PyObject_CallFunctionObjArgs(transform_fn, self, args, NULL);
@@ -227,6 +228,10 @@ static void PVector_dealloc(PVector *self) {
   debug("Dealloc(): self=%p, self->count=%u, tail->refCount=%u, root->refCount=%u, self->shift=%u, self->tail=%p, self->root=%p\n",
         self, self->count, NODE_REF_COUNT(self->tail), NODE_REF_COUNT(self->root), self->shift, self->tail, self->root);
 
+  if (self->in_weakreflist != NULL) {
+    PyObject_ClearWeakRefs((PyObject *) self);
+  }
+  
   PyObject_GC_UnTrack((PyObject*)self);
   Py_TRASHCAN_SAFE_BEGIN(self);
 
@@ -248,6 +253,7 @@ static PyObject *PVector_toList(PVector *self) {
 
   return list;
 }
+
 
 static PyObject *PVector_repr(PVector *self) {
   // Reuse the list repr code, a bit less efficient but saves some code
@@ -321,10 +327,26 @@ static PyObject* PVector_richcompare(PyObject *v, PyObject *w, int op) {
     PVector *vt, *wt;
     Py_ssize_t i;
     Py_ssize_t vlen, wlen;
+    PyObject *list;
+    PyObject *result;
 
     if(!PVector_CheckExact(v) || !PVector_CheckExact(w)) {
-        Py_INCREF(Py_NotImplemented);
-        return Py_NotImplemented;
+      if(PVector_CheckExact(v)) {
+        list = PVector_toList((PVector*)v);
+        result = PyObject_RichCompare(list , w, op);
+        Py_DECREF(list);
+        return result; 
+      }
+
+      if(PVector_CheckExact(w)) {
+        list = PVector_toList((PVector*)w);
+        result = PyObject_RichCompare(v, list, op);
+        Py_DECREF(list);
+        return result; 
+      }
+
+      Py_INCREF(Py_NotImplemented);
+      return Py_NotImplemented;
     }
 
     if((op == Py_EQ) && (v == w)) {
@@ -349,7 +371,7 @@ static PyObject* PVector_richcompare(PyObject *v, PyObject *w, int op) {
             return NULL;
         }
         if (!k) {
-            break;
+           break;
         }
     }
 
@@ -493,6 +515,7 @@ static PVector* rawCopyPVector(PVector* vector) {
   newVector->shift = vector->shift;
   newVector->root = vector->root;
   newVector->tail = vector->tail;
+  newVector->in_weakreflist = NULL;
   PyObject_GC_Track((PyObject*)newVector);
   return newVector;
 }
@@ -515,9 +538,8 @@ static PyObject * PVector_evolver(PVector *self) {
   if (evolver == NULL) {
     return NULL;
   }
-  
-  PyObject_GC_Track(evolver);
   initializeEvolver(evolver, self, NULL);
+  PyObject_GC_Track(evolver);
   Py_INCREF(self);
   return (PyObject *)evolver;
 }
@@ -532,8 +554,6 @@ static PyObject* PVector_append(PVector *self, PyObject *obj);
 
 static PyObject* PVector_transform(PVector *self, PyObject *obj);
 
-static PyObject* PVector_set_in(PVector *self, PyObject *obj);
-
 static PyObject* PVector_set(PVector *self, PyObject *obj);
 
 static PyObject* PVector_mset(PVector *self, PyObject *args);
@@ -541,6 +561,10 @@ static PyObject* PVector_mset(PVector *self, PyObject *args);
 static PyObject* PVector_subscript(PVector* self, PyObject* item);
 
 static PyObject* PVector_extend(PVector *self, PyObject *args);
+
+static PyObject* PVector_delete(PVector *self, PyObject *args);
+
+static PyObject* PVector_remove(PVector *self, PyObject *args);
 
 static PySequenceMethods PVector_sequence_methods = {
     (lenfunc)PVector_len,            /* sq_length */
@@ -568,13 +592,14 @@ static PyMethodDef PVector_methods[] = {
 	{"set",         (PyCFunction)PVector_set, METH_VARARGS, "Inserts an element at the specified position"},
 	{"extend",      (PyCFunction)PVector_extend, METH_O|METH_COEXIST, "Extend"},
         {"transform",   (PyCFunction)PVector_transform, METH_VARARGS, "Apply one or more transformations"},
-        {"set_in",      (PyCFunction)PVector_set_in, METH_VARARGS, "Set in"},
         {"index",       (PyCFunction)PVector_index, METH_VARARGS, "Return first index of value"},
 	{"count",       (PyCFunction)PVector_count, METH_O, "Return number of occurrences of value"},
         {"__reduce__",  (PyCFunction)PVector_pickle_reduce, METH_NOARGS, "Pickle support method"},
         {"evolver",     (PyCFunction)PVector_evolver, METH_NOARGS, "Return new evolver for pvector"},
 	{"mset",        (PyCFunction)PVector_mset, METH_VARARGS, "Inserts multiple elements at the specified positions"},
         {"tolist",      (PyCFunction)PVector_toList, METH_NOARGS, "Convert to list"},
+        {"delete",      (PyCFunction)PVector_delete, METH_VARARGS, "Delete element(s) by index"},
+        {"remove",      (PyCFunction)PVector_remove, METH_VARARGS, "Remove element(s) by equality"},
 	{NULL}
 };
 
@@ -605,7 +630,7 @@ static PyTypeObject PVectorType = {
   (traverseproc)PVector_traverse,             /* tp_traverse       */
   0,                                          /* tp_clear          */
   PVector_richcompare,                        /* tp_richcompare    */
-  0,                                          /* tp_weaklistoffset */
+  offsetof(PVector, in_weakreflist),          /* tp_weaklistoffset */
   PVectorIter_iter,                           /* tp_iter           */
   0,                                          /* tp_iternext       */
   PVector_methods,                            /* tp_methods        */
@@ -642,6 +667,7 @@ static PVector* emptyNewPvec(void) {
   pvec->shift = SHIFT;
   pvec->root = newNode();
   pvec->tail = newNode();
+  pvec->in_weakreflist = NULL;
   PyObject_GC_Track((PyObject*)pvec);
   return pvec;
 }
@@ -664,6 +690,7 @@ static PVector* newPvec(unsigned int count, unsigned int shift, VNode *root) {
   pvec->shift = shift;
   pvec->root = root;
   pvec->tail = newNode();
+  pvec->in_weakreflist = NULL;
   PyObject_GC_Track((PyObject*)pvec);
   return pvec;
 }
@@ -951,10 +978,6 @@ static PyObject* PVector_transform(PVector *self, PyObject *obj) {
   return transform(self, obj);
 }
 
-static PyObject* PVector_set_in(PVector *self, PyObject *obj) {
-  return transform(self, obj);
-}
-
 /*
  Steals a reference to the object that is inserted in the vector.
 */
@@ -969,6 +992,7 @@ static PyObject* PVector_set(PVector *self, PyObject *args) {
 
   return internalSet(self, position, argObj);
 }
+
 
 static PyObject* PVector_mset(PVector *self, PyObject *args) {
   Py_ssize_t size = PyTuple_Size(args);
@@ -992,8 +1016,84 @@ static PyObject* PVector_mset(PVector *self, PyObject *args) {
 }
 
 
+static PyObject* internalDelete(PVector *self, Py_ssize_t index, PyObject *stop_obj) {
+  Py_ssize_t stop;
+  PyObject *list;
+  PyObject *result;
+
+  if (index < 0) {
+    index += self->count;
+  }
+
+  if (stop_obj != NULL) {
+    if (PyIndex_Check(stop_obj)) {
+      stop = PyNumber_AsSsize_t(stop_obj, PyExc_IndexError);
+      if (stop == -1 && PyErr_Occurred()) {
+        return NULL;
+      }
+    } else {
+      PyErr_Format(PyExc_TypeError, "Stop index must be integer, not %.200s", Py_TYPE(stop_obj)->tp_name);
+      return NULL;
+    }
+
+    if (stop < 0) {
+      stop += self->count;
+    }
+  } else {
+    if (index < 0 || index >= self->count) {
+      PyErr_SetString(PyExc_IndexError, "delete index out of range");
+      return NULL;
+    }
+
+    stop = index + 1;
+  }
+
+  list = PVector_toList(self);
+  if(PyList_SetSlice(list, index, stop, NULL) < 0) {
+    return NULL;
+  }
+
+  result = PVector_extend(EMPTY_VECTOR, list);
+  Py_DECREF(list);
+  return result;
+}
+
+static PyObject* PVector_delete(PVector *self, PyObject *args) {
+  Py_ssize_t index;
+  PyObject *stop_obj = NULL;
+
+  if(!PyArg_ParseTuple(args, "n|O:delete", &index, &stop_obj)) {
+    return NULL;
+  }
+
+  return internalDelete(self, index, stop_obj);
+}
+
+static PyObject* PVector_remove(PVector *self, PyObject *args) {
+  Py_ssize_t index;
+  PyObject* py_index = PVector_index(self, args);
+
+  if(py_index != NULL) {
+#if PY_MAJOR_VERSION >= 3
+      index = PyLong_AsSsize_t(py_index);
+#else
+      index = PyInt_AsSsize_t(py_index);
+#endif
+    Py_DECREF(py_index);
+    return internalDelete(self, index, NULL);
+  }
+
+  PyErr_SetString(PyExc_ValueError, "PVector.remove(x): x not in vector");
+  return NULL;
+}
+
 static PyMethodDef PyrsistentMethods[] = {
-  {"pvector", pyrsistent_pvec, METH_VARARGS, "Factory method for persistent vectors"},
+  {"pvector", pyrsistent_pvec, METH_VARARGS, 
+   "pvector([iterable])\n"
+   "Create a new persistent vector containing the elements in iterable.\n\n"
+   ">>> v1 = pvector([1, 2, 3])\n"
+   ">>> v1\n"
+   "pvector([1, 2, 3])"},
   {NULL, NULL, 0, NULL}
 };
 
@@ -1167,6 +1267,7 @@ static void PVectorEvolver_dealloc(PVectorEvolver *);
 static PyObject *PVectorEvolver_append(PVectorEvolver *, PyObject *);
 static PyObject *PVectorEvolver_extend(PVectorEvolver *, PyObject *);
 static PyObject *PVectorEvolver_set(PVectorEvolver *, PyObject *);
+static PyObject *PVectorEvolver_delete(PVectorEvolver *self, PyObject *args);
 static PyObject *PVectorEvolver_subscript(PVectorEvolver *, PyObject *);
 static PyObject *PVectorEvolver_persistent(PVectorEvolver *);
 static Py_ssize_t PVectorEvolver_len(PVectorEvolver *);
@@ -1184,6 +1285,7 @@ static PyMethodDef PVectorEvolver_methods[] = {
 	{"append",      (PyCFunction)PVectorEvolver_append, METH_O,       "Appends an element"},
 	{"extend",      (PyCFunction)PVectorEvolver_extend, METH_O|METH_COEXIST, "Extend"},
 	{"set",         (PyCFunction)PVectorEvolver_set, METH_VARARGS, "Set item"},
+        {"delete",      (PyCFunction)PVectorEvolver_delete, METH_VARARGS, "Delete item"},
         {"persistent",  (PyCFunction)PVectorEvolver_persistent, METH_NOARGS, "Create PVector from evolver"},
         {"is_dirty",    (PyCFunction)PVectorEvolver_is_dirty, METH_NOARGS, "Check if evolver contains modifications"},
         {NULL,              NULL}           /* sentinel */
@@ -1234,7 +1336,7 @@ static PyTypeObject PVectorEvolverType = {
 
 
 static void cleanNodeRecursively(VNode *node, int level) {
-  debug("Freezing recursively node=%p, level=%u\n", node, level);
+  debug("Cleaning recursively node=%p, level=%u\n", node, level);
 
   int i;
   CLEAR_DIRTY(node);
@@ -1250,9 +1352,9 @@ static void cleanNodeRecursively(VNode *node, int level) {
 }
 
 static void cleanVector(PVector *vector) {
-  // Freezing the vector means that all dirty indications are cleared
+  // Cleaning the vector means that all dirty indications are cleared
   // and that the nodes that were dirty get a ref count of 1 since
-  // they are brand new. Once frozen the vector can be released into
+  // they are brand new. Once cleaned the vector can be released into
   // the wild.
   if(IS_DIRTY(vector->tail)) {
     cleanNodeRecursively(vector->tail, 0);
@@ -1388,6 +1490,40 @@ static PyObject *PVectorEvolver_set(PVectorEvolver *self, PyObject *args) {
   return (PyObject*)self;
 }
 
+static PyObject *PVectorEvolver_delete(PVectorEvolver *self, PyObject *args) {
+  PyObject *position = NULL;
+
+  /* The n parses for size, the O parses for a Python object */
+  if(!PyArg_ParseTuple(args, "O", &position)) {
+    return NULL;
+  }
+
+  if(PVectorEvolver_set_item(self, position, NULL) < 0) {
+    return NULL;
+  }
+
+  Py_INCREF(self);
+  return (PyObject*)self;
+}
+
+
+static int internalPVectorDelete(PVectorEvolver *self, Py_ssize_t position) {
+  // Delete element. Should be unusual. Simple but expensive operation
+  // that reuses the delete code for the vector. Realize the vector, delete on it and
+  // then reset the evolver to work on the new vector.
+  PVector *temp = (PVector*)PVectorEvolver_persistent(self);
+  PVector *temp2 = (PVector*)internalDelete(temp, position, NULL);
+  Py_DECREF(temp);
+
+  if(temp2 == NULL) {
+    return -1;
+  }
+
+  Py_DECREF(self->originalVector);
+  self->originalVector = temp2;
+  self->newVector = self->originalVector;
+  return 0;
+}
 
 static int PVectorEvolver_set_item(PVectorEvolver *self, PyObject* item, PyObject* value) {
   if (PyIndex_Check(item)) {
@@ -1406,21 +1542,31 @@ static int PVectorEvolver_set_item(PVectorEvolver *self, PyObject* item, PyObjec
         self->newVector = rawCopyPVector(self->originalVector);
       }
 
-      if(position < TAIL_OFF(self->newVector)) {
-        self->newVector->root = doSetWithDirty(self->newVector->root, self->newVector->shift, position, value);
-      } else {
-        self->newVector->tail = doSetWithDirty(self->newVector->tail, 0, position, value);
+      if(value != NULL) {
+        if(position < TAIL_OFF(self->newVector)) {
+          self->newVector->root = doSetWithDirty(self->newVector->root, self->newVector->shift, position, value);
+        } else {
+          self->newVector->tail = doSetWithDirty(self->newVector->tail, 0, position, value);
+        }
+
+        return 0;
       }
-      
-      return 0;
+
+      return internalPVectorDelete(self, position);
     } else if((0 <= position) && (position < (self->newVector->count + PyList_GET_SIZE(self->appendList)))) {
-      int result = PyList_SetItem(self->appendList, position - self->newVector->count, value); 
-      if(result == 0) {
-        Py_INCREF(value);
+      if (value != NULL) {
+        int result = PyList_SetItem(self->appendList, position - self->newVector->count, value); 
+        if(result == 0) {
+          Py_INCREF(value);
+        }
+        return result;
       }
-      return result;
-    } else if((0 <= position) && (position < (self->newVector->count + PyList_GET_SIZE(self->appendList) + 1))) {
-      return PyList_Append(self->appendList, value); 
+
+      return internalPVectorDelete(self, position);
+    } else if((0 <= position)
+              && (position < (self->newVector->count + PyList_GET_SIZE(self->appendList) + 1))
+              && (value != NULL)) {
+        return PyList_Append(self->appendList, value);
     } else {
       PyErr_Format(PyExc_IndexError, "Index out of range: %zd", position);
     }

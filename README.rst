@@ -1,5 +1,16 @@
-Introduction
-============
+Pyrsistent
+==========
+.. image:: https://travis-ci.org/tobgu/pyrsistent.png?branch=master
+    :target: https://travis-ci.org/tobgu/pyrsistent
+
+.. image:: https://badge.fury.io/py/pyrsistent.svg
+    :target: https://badge.fury.io/py/pyrsistent
+
+.. image:: https://coveralls.io/repos/tobgu/pyrsistent/badge.svg?branch=master&service=github
+    :target: https://coveralls.io/github/tobgu/pyrsistent?branch=master
+
+
+.. _Pyrthon: https://www.github.com/tobgu/pyrthon/
 
 Pyrsistent is a number of persistent collections (by some referred to as functional data structures). Persistent in 
 the sense that they are immutable.
@@ -17,6 +28,9 @@ data structures are designed to share common elements through path copying.
 It aims at taking these concepts and make them as pythonic as possible so that they can be easily integrated into any python
 program without hassle.
 
+If you want to go all in on persistent data structures and use literal syntax to define them in your code rather
+than function calls check out Pyrthon_.
+
 Examples
 --------
 .. _Sequence: collections_
@@ -33,11 +47,12 @@ The collection types and key features currently implemented are:
 * PMap_, similar to dict
 * PSet_, similar to set
 * PRecord_, a PMap on steroids with fixed fields, optional type and invariant checking and much more
+* PClass_, a Python class fixed fields, optional type and invariant checking and much more
 * `Checked collections`_, PVector, PMap and PSet with optional type and invariance checks and more
 * PBag, similar to collections.Counter
 * PList, a classic singly linked list
 * PDeque, similar to collections.deque
-* Immutable object type (pclass) built on the named tuple
+* Immutable object type (immutable) built on the named tuple
 * freeze_ and thaw_ functions to convert between pythons standard collections and pyrsistent collections.
 * Flexible transformations_ of arbitrarily complex structures built from PMaps and PVectors.
 
@@ -113,17 +128,19 @@ Random access and insert is log32(n) where n is the size of the map.
 
     # Evolution of nested persistent structures
     >>> m4 = m(a=5, b=6, c=v(1, 2))
-    >>> m4.set_in(('c', 1), 17)
+    >>> m4.transform(('c', 1), 17)
     pmap({'a': 5, 'c': pvector([1, 17]), 'b': 6})
     >>> m5 = m(a=1, b=2)
 
     # Evolve by merging with other mappings
     >>> m5.update(m(a=2, c=3), {'a': 17, 'd': 35})
     pmap({'a': 17, 'c': 3, 'b': 2, 'd': 35})
+    >>> pmap({'x': 1, 'y': 2}) + pmap({'y': 3, 'z': 4})
+    pmap({'y': 3, 'x': 1, 'z': 4})
 
     # Dict-like methods to convert to list and iterate
     >>> m3.items()
-    [('a', 5), ('c', 3), ('b', 2)]
+    pvector([('a', 5), ('c', 3), ('b', 2)])
     >>> list(m3)
     ['a', 'c', 'b']
 
@@ -201,7 +218,7 @@ by providing an iterable of types.
     BRecord(y=None, x=3)
     >>> BRecord(x=3.0)
     Traceback (most recent call last):
-    TypeError: Invalid type for field BRecord.x, was <type 'float'>
+    PTypeError: Invalid type for field BRecord.x, was float
 
 Mandatory fields
 ****************
@@ -255,6 +272,24 @@ Global invariants are inherited to subclasses.
     ...
     ('x larger than y',)
 
+Invariants may also contain multiple assertions. For those cases the invariant function should
+return a tuple of invariant tuples as described above. This structure is reflected in the
+invariant_errors attribute of the exception which will contain tuples with data from all failed
+invariants. Eg:
+
+.. code:: python
+
+    >>> class EvenX(PRecord):
+    ...     x = field(invariant=lambda x: ((x > 0, 'x negative'), (x % 2 == 0, 'x odd')))
+    ...
+    >>> try:
+    ...    EvenX(x=-1)
+    ... except InvariantException as e:
+    ...    print(e.invariant_errors)
+    ...
+    (('x negative', 'x odd'),)
+
+
 Factories
 *********
 It's possible to specify factory functions for fields. The factory function receives whatever
@@ -277,6 +312,19 @@ this behaviour.
     >>> ERecord.create({'d': {'x': '1'}})
     ERecord(d=DRecord(x=1))
 
+Collection fields
+*****************
+It is also possible to have fields with ``pyrsistent`` collections.
+
+.. code:: python
+
+   >>> from pyrsistent import pset_field, pmap_field, pvector_field
+   >>> class MultiRecord(PRecord):
+   ...     set_of_ints = pset_field(int)
+   ...     map_int_to_str = pmap_field(int, str)
+   ...     vector_of_strs = pvector_field(str)
+   ...
+	
 Serialization
 *************
 PRecords support serialization back to dicts. Default serialization will take keys and values
@@ -297,10 +345,30 @@ to take care of fields that require special treatment.
 
 
 .. _instar: https://github.com/boxed/instar/
-.. _transformations: https://github.com/boxed/instar/
+
+.. _PClass:
+
+PClass
+~~~~~~
+A PClass is a python class with a fixed set of specified fields. PClasses are declared as python classes inheriting
+from PClass. It is defined the same way that PRecords are and behaves like a PRecord in all aspects except that it
+is not a PMap and hence not a collection but rather a plain Python object.
+
+.. code:: python
+
+    >>> from pyrsistent import PClass, field
+    >>> class AClass(PClass):
+    ...     x = field()
+    ...
+    >>> a = AClass(x=3)
+    >>> a
+    AClass(x=3)
+    >>> a.x
+    3
+
 
 Checked collections
--------------------
+~~~~~~~~~~~~~~~~~~~
 Checked collections currently come in three flavors: CheckedPVector, CheckedPMap and CheckedPSet.
 
 .. code:: python
@@ -337,7 +405,7 @@ Checked collections currently come in three flavors: CheckedPVector, CheckedPMap
     # But also makes asserts that types and invariants hold
     >>> lottery_0215.transform([0, 'name'], 999)
     Traceback (most recent call last):
-    TypeError: Invalid type for field Lottery.name, was <type 'int'>
+    PTypeError: Invalid type for field Lottery.name, was int
 
     >>> lottery_0215.transform([0, 'numbers'], set())
     Traceback (most recent call last):
@@ -349,6 +417,8 @@ Checked collections currently come in three flavors: CheckedPVector, CheckedPMap
     [{'numbers': set([1, 2, 3]), 'name': 'SuperLotto'}, {'numbers': set([4, 5, 6]), 'name': 'MegaLotto'}]
     >>> lottery_0215.serialize()
     [{'numbers': set([1, 2, 3]), 'name': 'SuperLotto'}, {'numbers': set([4, 5, 6]), 'name': 'MegaLotto'}]
+
+.. _transformations:
 
 Transformations
 ~~~~~~~~~~~~~~~
@@ -485,8 +555,8 @@ These functions are great when your cozy immutable world has to interact with th
 Compatibility
 -------------
 
-Pyrsistent is developed and tested on Python 2.6, 2.7, 3.2, 3.4 and PyPy (Python 2.7 compatible). It will most likely work
-on all other versions >= 3.2 but no guarantees are given. :)
+Pyrsistent is developed and tested on Python 2.6, 2.7, 3.4 and PyPy (Python 2.7 compatible). It will most likely work
+on all other versions >= 3.4 but no guarantees are given. :)
 
 Compatibility issues
 ~~~~~~~~~~~~~~~~~~~~
@@ -536,6 +606,17 @@ Christopher Armstrong https://github.com/radix
 
 Anders Hovmöller https://github.com/boxed
 
+Itamar Turner-Trauring https://github.com/itamarst
+
+Jonathan Lange https://github.com/jml
+
+Richard Futrell https://github.com/Futrell
+
+Jakob Hollenstein https://github.com/jkbjh
+
+David Honour https://github.com/foolswood
+
+David R. MacIver https://github.com/DRMacIver
 
 Contributing
 ------------

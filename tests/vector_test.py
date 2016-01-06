@@ -1,12 +1,14 @@
 import pickle
 import pytest
 
+from pyrsistent._pvector import python_pvector
 
-@pytest.fixture(scope='session', params=['pyrsistent', 'pvectorc'])
+
+@pytest.fixture(scope='session', params=['pyrsistent._pvector', 'pvectorc'])
 def pvector(request):
     m = pytest.importorskip(request.param)
-    if request.param == 'pyrsistent':
-        return m._pvector
+    if request.param == 'pyrsistent._pvector':
+        return m.python_pvector
     return m.pvector
 
 
@@ -232,24 +234,59 @@ def test_slicing_reverse(pvector):
     assert len(seq3) == 4
 
 
+def test_delete_index(pvector):
+    seq = pvector([1, 2, 3])
+    assert seq.delete(0) == pvector([2, 3])
+    assert seq.delete(1) == pvector([1, 3])
+    assert seq.delete(2) == pvector([1, 2])
+    assert seq.delete(-1) == pvector([1, 2])
+    assert seq.delete(-2) == pvector([1, 3])
+    assert seq.delete(-3) == pvector([2, 3])
+
+
+def test_delete_index_out_of_bounds(pvector):
+    with pytest.raises(IndexError):
+        pvector([]).delete(0)
+    with pytest.raises(IndexError):
+        pvector([]).delete(-1)
+
+
+def test_delete_index_malformed(pvector):
+    with pytest.raises(TypeError):
+        pvector([]).delete('a')
+
+
+def test_delete_slice(pvector):
+    seq = pvector(range(5))
+    assert seq.delete(1, 4) == pvector([0, 4])
+    assert seq.delete(4, 1) == seq
+    assert seq.delete(0, 1) == pvector([1, 2, 3, 4])
+    assert seq.delete(6, 8) == seq
+    assert seq.delete(-1, 1) == seq
+    assert seq.delete(1, -1) == pvector([0, 4])
+
+
+def test_remove(pvector):
+    seq = pvector(range(5))
+    assert seq.remove(3) == pvector([0, 1, 2, 4])
+
+
+def test_remove_first_only(pvector):
+    seq = pvector([1, 2, 3, 2, 1])
+    assert seq.remove(2) == pvector([1, 3, 2, 1])
+
+
+def test_remove_index_out_of_bounds(pvector):
+    seq = pvector(range(5))
+    with pytest.raises(ValueError) as err:
+        seq.remove(5)
+    assert 'not in' in str(err.value)
+
+
 def test_addition(pvector):
     v = pvector([1, 2]) + pvector([3, 4])
 
     assert list(v) == [1, 2, 3, 4]
-
-
-def test_slicing_reverse(pvector):
-    seq = pvector(range(10))
-    seq2 = seq[::-1]
-
-    assert seq2[0] == 9
-    assert seq2[1] == 8
-    assert len(seq2) == 10
-
-    seq3 = seq[-3: -7: -1]
-    assert seq3[0] == 7
-    assert seq3[3] == 4
-    assert len(seq3) == 4
 
 
 def test_sorted(pvector):
@@ -282,11 +319,6 @@ def test_index_error_negative(pvector):
 def test_is_sequence(pvector):
     from collections import Sequence
     assert isinstance(pvector(), Sequence)
-
-
-def test_is_hashable(pvector):
-    from collections import Hashable
-    assert isinstance(pvector(), Hashable)
 
 
 def test_empty_repr(pvector):
@@ -375,50 +407,50 @@ def test_repeat(pvector):
     assert -3 * pvector([1, 2]) is pvector()
 
 
-def test_set_zero_key_length(pvector):
+def test_transform_zero_key_length(pvector):
     x = pvector([1, 2])
 
-    assert x.set_in([], 3) == 3
+    assert x.transform([], 3) == 3
 
 
-def test_set_in_base_case(pvector):
+def test_transform_base_case(pvector):
     x = pvector([1, 2])
 
-    assert x.set_in([1], 3) == pvector([1, 3])
+    assert x.transform([1], 3) == pvector([1, 3])
 
 
-def test_set_in_nested_vectors(pvector):
+def test_transform_nested_vectors(pvector):
     x = pvector([1, 2, pvector([3, 4]), 5])
 
-    assert x.set_in([2, 0], 999) == pvector([1, 2, pvector([999, 4]), 5])
+    assert x.transform([2, 0], 999) == pvector([1, 2, pvector([999, 4]), 5])
 
 
-def test_set_in_when_appending(pvector):
+def test_transform_when_appending(pvector):
     from pyrsistent import m
     x = pvector([1, 2])
 
-    assert x.set_in([2, 'd'], 999) == pvector([1, 2, m(d=999)])
+    assert x.transform([2, 'd'], 999) == pvector([1, 2, m(d=999)])
 
 
-def test_set_in_index_error_out_range(pvector):
+def test_transform_index_error_out_range(pvector):
     x = pvector([1, 2, pvector([3, 4]), 5])
 
     with pytest.raises(IndexError):
-        x.set_in([2, 10], 999)
+        x.transform([2, 10], 999)
 
 
-def test_set_in_index_error_wrong_type(pvector):
+def test_transform_index_error_wrong_type(pvector):
     x = pvector([1, 2, pvector([3, 4]), 5])
 
     with pytest.raises(TypeError):
-        x.set_in([2, 'foo'], 999)
+        x.transform([2, 'foo'], 999)
 
 
-def test_set_in_non_setable_type(pvector):
+def test_transform_non_setable_type(pvector):
     x = pvector([1, 2, 5])
 
     with pytest.raises(TypeError):
-        x.set_in([2, 3], 999)
+        x.transform([2, 3], 999)
 
 
 def test_reverse(pvector):
@@ -739,17 +771,125 @@ def test_evolver_is_dirty(pvector):
     e.persistent()
     assert not e.is_dirty()
 
+
 def test_vector_insert_one_step_beyond_end(pvector):
     # This test exists to get the transform functionality under memory
     # leak supervision. Most of the transformation tests are in test_transform.py.
     v = pvector([1, 2])
     assert v.transform([2], 3) == pvector([1, 2, 3])
 
+
 def test_evolver_with_no_updates_returns_same_pvector(pvector):
     v = pvector([1, 2])
     assert v.evolver().persistent() is v
+
 
 def test_evolver_returns_itself_on_evolving_operations(pvector):
     # Does this to be able to chain operations
     v = pvector([1, 2])
     assert v.evolver().append(3).extend([4, 5]).set(1, 6).persistent() == pvector([1, 6, 3, 4, 5])
+
+
+def test_evolver_delete_by_index(pvector):
+    e = pvector([1, 2, 3]).evolver()
+
+    del e[0]
+
+    assert e.persistent() == python_pvector([2, 3])
+    assert e.append(4).persistent() == python_pvector([2, 3, 4])
+
+
+def test_evolver_delete_function_by_index(pvector):
+    e = pvector([1, 2, 3]).evolver()
+
+    assert e.delete(1).persistent() == python_pvector([1, 3])
+
+
+def test_evolver_delete_function_by_index_multiple_times(pvector):
+    SIZE = 40
+    e = pvector(range(SIZE)).evolver()
+    for i in range(SIZE):
+        assert e[0] == i
+        assert list(e.persistent()) == list(range(i, SIZE))
+        del e[0]
+
+    assert e.persistent() == list()
+
+
+def test_evolver_delete_function_invalid_index(pvector):
+    e = pvector([1, 2]).evolver()
+
+    with pytest.raises(TypeError):
+        del e["e"]
+
+
+def test_delete_of_non_existing_element(pvector):
+    e = pvector([1, 2]).evolver()
+
+    with pytest.raises(IndexError):
+        del e[2]
+
+    del e[0]
+    del e[0]
+
+    with pytest.raises(IndexError):
+        del e[0]
+
+    assert e.persistent() == pvector()
+
+
+def test_append_followed_by_delete(pvector):
+    e = pvector([1, 2]).evolver()
+
+    e.append(3)
+
+    del e[2]
+
+
+def test_evolver_set_followed_by_delete(pvector):
+    evolver = pvector([1, 2]).evolver()
+    evolver[1] = 3
+
+    assert [evolver[i] for i in range(len(evolver))] == [1, 3]
+
+    del evolver[0]
+
+    assert evolver.persistent() == pvector([3])
+
+
+def test_compare_with_list(pvector):
+    v = pvector([1, 2, 3])
+
+    assert v == [1, 2, 3]
+    assert v != [1, 2]
+    assert v > [1, 2]
+    assert v < [2, 2]
+    assert [1, 2] < v
+    assert v <= [1, 2, 3]
+    assert v <= [1, 2, 4]
+    assert v >= [1, 2, 3]
+    assert v >= [1, 2]
+
+
+def test_python_no_c_extension_with_environment_variable():
+    from six.moves import reload_module
+    import pyrsistent._pvector
+    import pyrsistent
+    import os
+
+    os.environ['PYRSISTENT_NO_C_EXTENSION'] = 'TRUE'
+
+    reload_module(pyrsistent._pvector)
+    reload_module(pyrsistent)
+
+    assert type(pyrsistent.pvector()) is pyrsistent._pvector.PythonPVector
+
+    del os.environ['PYRSISTENT_NO_C_EXTENSION']
+
+    reload_module(pyrsistent._pvector)
+    reload_module(pyrsistent)
+
+
+def test_supports_weakref(pvector):
+    import weakref
+    weakref.ref(pvector())
